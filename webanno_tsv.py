@@ -3,9 +3,10 @@ import logging
 import re
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple
 
 NO_LABEL_ID = -1
+
 COMMENT_RE = re.compile('^#')
 SPAN_LAYER_DEF_RE = re.compile(r'^#T_SP=([^|]+)\|(.*)$')
 SENTENCE_RE = re.compile('^#Text=(.*)')
@@ -43,11 +44,6 @@ class Token:
     end: int
     text: str
 
-    def __lt__(self, other) -> bool:
-        # allow tokens to be sorted if in the same document
-        assert self.doc == other.doc
-        return self.sentence.idx <= other.sentence.idx and self.idx < other.idx
-
     @property
     def doc(self) -> 'Document':
         return self.sentence.doc
@@ -56,23 +52,40 @@ class Token:
     def annotations(self) -> List['Annotation']:
         return [a for a in self.doc.annotations if self in a.tokens]
 
-    def is_at_begin_of_sentence(self) -> bool:
-        return self.idx == 1
 
-    def is_at_end_of_sentence(self) -> bool:
-        return self.idx == max(t.idx for t in self.sentence.tokens)
+def _unsafe_token_sort(tokens: Iterable[Token]) -> Iterable[Token]:
+    # this is unsafe in that it doesn't check the tokens' document is the same.
+    return sorted(tokens, key=lambda t: (t.sentence.idx * len(t.doc.tokens) + t.idx))
 
-    def is_followed_by(self, other: 'Token') -> bool:
-        return ((self.sentence == other.sentence and self.idx == other.idx - 1)
-                or (self.sentence.is_followed_by(other.sentence)
-                    and other.is_at_begin_of_sentence()
-                    and self.is_at_end_of_sentence()))
+
+def token_sort(tokens: Iterable[Token]) -> Iterable[Token]:
+    if tokens:
+        if not len(set(t.doc for t in tokens)) == 1:
+            raise ValueError('Cannot sort tokens in different documents')
+        return _unsafe_token_sort(tokens)
+    else:
+        return tokens
+
+
+def token_is_at_begin_of_sentence(token: Token) -> bool:
+    return token.idx == 1
+
+
+def token_is_at_end_of_sentence(token: Token) -> bool:
+    return token.idx == max(t.idx for t in token.sentence.tokens)
+
+
+def token_is_followed_by(token: Token, other: Token) -> bool:
+    return ((token.sentence == other.sentence and token.idx == other.idx - 1)
+            or (sentence_is_followed_by(token.sentence, other.sentence)
+                and token_is_at_begin_of_sentence(other)
+                and token_is_at_end_of_sentence(token)))
 
 
 class Annotation:
 
     def __init__(self, tokens: List[Token], layer_name: str, field_name: str, label: str, label_id: int = NO_LABEL_ID):
-        self._tokens = tokens
+        self.tokens = tokens
         self.layer_name = layer_name
         self.field_name = field_name
         self.label = label
@@ -80,39 +93,40 @@ class Annotation:
 
     @property
     def start(self):
-        return self._tokens[0].start
+        return self.tokens[0].start
 
     @property
     def end(self):
-        return self._tokens[-1].end
+        return self.tokens[-1].end
 
     @property
     def sentences(self) -> List['Sentence']:
-        return sorted(list(set(t.sentence for t in self._tokens)), key=lambda s: s.idx)
+        return sorted(list(set(t.sentence for t in self.tokens)), key=lambda s: s.idx)
 
     @property
     def text(self):
-        return ' '.join([t.text for t in self._tokens])
-
-    @property
-    def tokens(self):
-        return list(self._tokens)  # return a read-only copy
+        return ' '.join([t.text for t in self.tokens])
 
     @property
     def doc(self):
-        return self._tokens[0].doc
+        return self.tokens[0].doc
 
     @property
     def token_texts(self):
-        return [token.text for token in self._tokens]
+        return [token.text for token in self.tokens]
 
-    def merge_other(self, other: 'Annotation'):
-        assert (self.layer_name == other.layer_name)
-        assert (self.field_name == other.field_name)
-        assert (self.label == other.label)
-        assert (self.label_id == other.label_id)
-        assert (self.tokens[-1].is_followed_by(other.tokens[0]))
-        self._tokens = sorted(self._tokens + other.tokens)
+
+def annotation_merge_other(a: Annotation, other: Annotation):
+    assert (a.layer_name == other.layer_name)
+    assert (a.field_name == other.field_name)
+    assert (a.label == other.label)
+    assert (a.label_id == other.label_id)
+    assert (token_is_followed_by(a.tokens[-1], other.tokens[0]))
+    a.tokens = token_sort(a.tokens + other.tokens)
+
+
+def _annotation_type(layer_name, field_name):
+    return '|'.join([layer_name, field_name])
 
 
 class Sentence:
@@ -127,17 +141,21 @@ class Sentence:
     def token_texts(self) -> List[str]:
         return [token.text for token in self.tokens]
 
-    def add_token(self, token):
-        self.tokens.append(token)
 
-    def annotations_with_type(self, layer_name: str, field_name: str) -> List[Annotation]:
-        return [a for a in self.doc.annotations_with_type(layer_name, field_name) if self in a.sentences]
+def sentence_add_token(s: Sentence, token: Token):
+    s.tokens.append(token)
 
-    def is_following(self, other: 'Sentence') -> bool:
-        return self.doc == other.doc and self.idx == (other.idx + 1)
 
-    def is_followed_by(self, other: 'Sentence') -> bool:
-        return other.is_following(self)
+def sentence_annotations_with_type(s: Sentence, layer_name: str, field_name: str) -> List[Annotation]:
+    return [a for a in document_annotations_with_type(s.doc, layer_name, field_name) if s in a.sentences]
+
+
+def sentence_is_following(s: Sentence, other: Sentence) -> bool:
+    return s.doc == other.doc and s.idx == (other.idx + 1)
+
+
+def sentence_is_followed_by(s: Sentence, other: Sentence) -> bool:
+    return sentence_is_following(other, s)
 
 
 class Document:
@@ -168,21 +186,17 @@ class Document:
             layer_names = [('l1', ['annotation'])]
         self.layer_names = layer_names
         self.sentences: List[Sentence] = list()
-        self._annotations: Dict[str, List[Annotation]] = defaultdict(list)
-        self._next_token_idx = 0
+        self.annotation_by_type: Dict[str, List[Annotation]] = defaultdict(list)
+        self.next_token_idx = 0
         self.path = ''  # used to indicate the path this was read from
 
     @property
-    def _next_sentence_idx(self) -> int:
+    def next_sentence_idx(self) -> int:
         return len(self.sentences) + 1
-
-    @staticmethod
-    def _anno_type(layer_name, field_name):
-        return '|'.join([layer_name, field_name])
 
     @property
     def annotations(self) -> List[Annotation]:
-        return [a for values in list(self._annotations.values()) for a in values]
+        return [a for values in list(self.annotation_by_type.values()) for a in values]
 
     @property
     def text(self) -> str:
@@ -192,80 +206,88 @@ class Document:
     def tokens(self) -> List[Token]:
         return [t for s in self.sentences for t in s.tokens]
 
-    def sentence_with_idx(self, idx) -> Optional[Sentence]:
-        try:
-            return self.sentences[idx - 1]
-        except IndexError:
-            return None
 
-    def fix_annotation_ids(self) -> None:
-        """
-        Setup label ids for annotations contained in this document to be consistent.
-        After this, there should be no duplicate label id and every multi-token
-        annotation should have an id. Leave present label_ids unchanged if possible.
-        """
-        max_id = max([a.label_id for a in self.annotations], default=1)
-        ids_seen = set()
-        for a in self.annotations:
-            if len(a.tokens) > 1 and (a.label_id == NO_LABEL_ID or a.label_id in ids_seen):
-                a.label_id = max_id + 1
-                max_id = a.label_id
-            ids_seen.add(a.label_id)
+def document_sentence_with_idx(doc: Document, idx) -> Optional[Sentence]:
+    try:
+        return doc.sentences[idx - 1]
+    except IndexError:
+        return None
 
-    def add_tokens_as_sentence(self, tokens: List[str]) -> Sentence:
-        """
-        Builds a Webanno Sentence instance for the token texts, incrementing
-        sentence and token indices and calculating (utf-16) offsets for the tokens
-        as per the TSV standard. The sentence is added to the document's sentences.
 
-        :param tokens: The tokenized version of param text.
-        :return: A Sentence instance.
-        """
-        text = " ".join(tokens)
-        sentence = Sentence(doc=self, idx=self._next_sentence_idx, text=text)
+def document_fix_annotation_ids(doc: Document) -> None:
+    """
+    Setup label ids for annotations contained in this document to be consistent.
+    After this, there should be no duplicate label id and every multi-token
+    annotation should have an id. Leave present label_ids unchanged if possible.
+    """
+    max_id = max([a.label_id for a in doc.annotations], default=1)
+    ids_seen = set()
+    for a in doc.annotations:
+        if len(a.tokens) > 1 and (a.label_id == NO_LABEL_ID or a.label_id in ids_seen):
+            a.label_id = max_id + 1
+            max_id = a.label_id
+        ids_seen.add(a.label_id)
 
-        for token_idx, token_text in enumerate(tokens, start=1):
-            token_utf16_length = int(len(token_text.encode('utf-16-le')) / 2)
-            end = self._next_token_idx + token_utf16_length
-            token = Token(sentence=sentence, idx=token_idx, start=self._next_token_idx, end=end, text=token_text)
-            sentence.add_token(token)
-            self._next_token_idx = end + 1
-        self.add_sentence(sentence)
-        return sentence
 
-    def tsv(self) -> str:
-        return webanno_tsv_write(self)
+def document_add_tokens_as_sentence(doc: Document, tokens: List[str]) -> Sentence:
+    """
+    Builds a Webanno Sentence instance for the token texts, incrementing
+    sentence and token indices and calculating (utf-16) offsets for the tokens
+    as per the TSV standard. The sentence is added to the document's sentences.
 
-    def add_sentence(self, sentence: Sentence):
-        sentence.doc = self
-        self.sentences.append(sentence)
+    :param doc: The document to add tokens to.
+    :param tokens: The tokenized version of param text.
+    :return: A Sentence instance.
+    """
+    text = " ".join(tokens)
+    sentence = Sentence(doc=doc, idx=doc.next_sentence_idx, text=text)
 
-    def add_annotation(self, annotation: Annotation):
-        merged = False
-        type_name = self._anno_type(annotation.layer_name, annotation.field_name)
-        # check if we should merge with an existing annotation
-        if annotation.label_id != NO_LABEL_ID:
-            same_type = self.annotations_with_type(annotation.layer_name, annotation.field_name)
-            same_id = [a for a in same_type if a.label_id == annotation.label_id]
-            assert (len(same_id)) <= 1
-            if len(same_id) > 0:
-                same_id[0].merge_other(annotation)
-                merged = True
-        if not merged:
-            assert (annotation.doc == self)
-            self._annotations[type_name].append(annotation)
+    for token_idx, token_text in enumerate(tokens, start=1):
+        token_utf16_length = int(len(token_text.encode('utf-16-le')) / 2)
+        end = doc.next_token_idx + token_utf16_length
+        token = Token(sentence=sentence, idx=token_idx, start=doc.next_token_idx, end=end, text=token_text)
+        sentence_add_token(sentence, token)
+        doc.next_token_idx = end + 1
+    document_add_sentence(doc, sentence)
+    return sentence
 
-    def remove_annotation(self, annotation: Annotation):
-        type_name = self._anno_type(annotation.layer_name, annotation.field_name)
-        annotations = self._annotations[type_name]
-        if annotations:
-            self._annotations[type_name].remove(annotation)
-        else:
-            raise ValueError
 
-    def annotations_with_type(self, layer_name: str, field_name: str) -> List[Annotation]:
-        type_name = self._anno_type(layer_name, field_name)
-        return self._annotations[type_name]
+def document_tsv(self) -> str:
+    return webanno_tsv_write(self)
+
+
+def document_add_sentence(self, sentence: Sentence):
+    sentence.doc = self
+    self.sentences.append(sentence)
+
+
+def document_add_annotation(doc: Document, annotation: Annotation):
+    merged = False
+    type_name = _annotation_type(annotation.layer_name, annotation.field_name)
+    # check if we should merge with an existing annotation
+    if annotation.label_id != NO_LABEL_ID:
+        same_type = document_annotations_with_type(doc, annotation.layer_name, annotation.field_name)
+        same_id = [a for a in same_type if a.label_id == annotation.label_id]
+        assert (len(same_id)) <= 1
+        if len(same_id) > 0:
+            annotation_merge_other(same_id[0], annotation)
+            merged = True
+    if not merged:
+        assert (annotation.doc == doc)
+        doc.annotation_by_type[type_name].append(annotation)
+
+
+def document_remove_annotation(doc: Document, annotation: Annotation):
+    type_name = _annotation_type(annotation.layer_name, annotation.field_name)
+    annotations = doc.annotation_by_type[type_name]
+    if annotations:
+        doc.annotation_by_type[type_name].remove(annotation)
+    else:
+        raise ValueError
+
+
+def document_annotations_with_type(doc: Document, layer_name: str, field_name: str) -> List[Annotation]:
+    return doc.annotation_by_type[_annotation_type(layer_name, field_name)]
 
 
 def _unescape(text: str) -> str:
@@ -300,9 +322,9 @@ def _read_token(doc: Document, row: Dict) -> Token:
     sent_idx, tok_idx = intsplit(row['sent_tok_idx'])
     start, end = intsplit(row['offsets'])
     text = _unescape(row['token'])
-    sentence = doc.sentence_with_idx(sent_idx)
+    sentence = document_sentence_with_idx(doc, sent_idx)
     token = Token(sentence, tok_idx, start, end, text)
-    sentence.add_token(token)
+    sentence_add_token(sentence, token)
     return token
 
 
@@ -358,7 +380,7 @@ def _tsv_read_lines(lines: List[str], overriding_layer_names: List[Tuple[str, Li
 
     for i, text in enumerate(sentences):
         sentence = Sentence(doc, idx=i + 1, text=text)
-        doc.add_sentence(sentence)
+        document_add_sentence(doc, sentence)
 
     span_columns = [layer + '~' + field for layer, fields in doc.layer_names for field in fields]
     rows = csv.DictReader(token_data, dialect=WebannoTsvDialect, fieldnames=TOKEN_FIELDNAMES + span_columns)
@@ -382,7 +404,7 @@ def _tsv_read_lines(lines: List[str], overriding_layer_names: List[Tuple[str, Li
                             field_name=field,
                             label_id=label_id,
                         )
-                        doc.add_annotation(a)
+                        document_add_annotation(doc, a)
     return doc
 
 
@@ -427,7 +449,7 @@ def _write_span_layer_header(layer_name: str, layer_fields: List[str]) -> str:
 
 def _annotations_for_token(token: Token, layer: str, field: str) -> List[Annotation]:
     doc = token.doc
-    return [a for a in doc.annotations_with_type(layer, field) if token in a.tokens]
+    return [a for a in document_annotations_with_type(doc, layer, field) if token in a.tokens]
 
 
 def _write_annotation_label(annotation: Annotation) -> str:
@@ -482,7 +504,7 @@ def webanno_tsv_write(doc: Document, linebreak='\n') -> str:
         lines.append(_write_span_layer_header(name, fields))
     lines.append('')
 
-    doc.fix_annotation_ids()
+    document_fix_annotation_ids(doc)
 
     for sentence in doc.sentences:
         lines.append('')

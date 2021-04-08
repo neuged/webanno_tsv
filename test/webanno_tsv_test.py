@@ -4,6 +4,11 @@ import unittest
 from webanno_tsv import (
     webanno_tsv_read_file, webanno_tsv_read_string,
     Annotation, Document, Sentence, Token,
+    document_add_annotation,
+    document_add_tokens_as_sentence,
+    document_annotations_with_type,
+    document_tsv,
+    sentence_annotations_with_type,
     NO_LABEL_ID
 )
 
@@ -30,7 +35,7 @@ class WebannoTsvModelTest(unittest.TestCase):
     def test_doc_tokens(self):
         strings = ['A', 'sentence', 'to', 'add', '.']
         doc = Document()
-        doc.add_tokens_as_sentence(strings)
+        document_add_tokens_as_sentence(doc, strings)
         self.assertEqual(5, len(doc.tokens))
         self.assertEqual(strings, [t.text for t in doc.tokens])
 
@@ -80,10 +85,10 @@ class WebannoTsvReadRegularFilesTest(unittest.TestCase):
     def test_reads_correct_annotations(self):
         _, snd = self.doc.sentences
 
-        poss = snd.annotations_with_type('l1', 'pos')
-        lemmas = snd.annotations_with_type('l2', 'lemma')
-        entity_ids = snd.annotations_with_type('l3', 'entity_id')
-        named_entities = snd.annotations_with_type('l3', 'named_entity')
+        poss = sentence_annotations_with_type(snd, 'l1', 'pos')
+        lemmas = sentence_annotations_with_type(snd, 'l2', 'lemma')
+        entity_ids = sentence_annotations_with_type(snd, 'l3', 'entity_id')
+        named_entities = sentence_annotations_with_type(snd, 'l3', 'named_entity')
 
         self.assertEqual(21, len(poss))
         self.assertEqual(22, len(lemmas))
@@ -131,10 +136,10 @@ class WebannoTsvReadFileWithFormatV33(unittest.TestCase):
         self.assertEqual(self.TEXT_SENT_2, self.doc.sentences[1].text)
 
     def test_reads_annotations_correctly(self):
-        self.assertEqual(9, len(self.doc.annotations_with_type('l1', 'named_entity')))
-        self.assertEqual(1, len(self.doc.annotations_with_type('l2', 'tex_layout')))
+        self.assertEqual(9, len(document_annotations_with_type(self.doc, 'l1', 'named_entity')))
+        self.assertEqual(1, len(document_annotations_with_type(self.doc, 'l2', 'tex_layout')))
 
-        annotations = self.doc.annotations_with_type('l1', 'named_entity')
+        annotations = document_annotations_with_type(self.doc, 'l1', 'named_entity')
         spot_checks = [
             (0, 'PERauthor', -1, 'Braun'),
             (3, 'DATEletter', 1, '10 . März 1832'),
@@ -170,7 +175,7 @@ class WebannoTsvReadFileWithMultiSentenceSpanAnnotation(unittest.TestCase):
         self.doc = webanno_tsv_read_file(test_file('test_input_multi_sentence_span.tsv'), DEFAULT_LAYERS)
         fst, snd = self.doc.sentences
 
-        annotations = self.doc.annotations_with_type('l3', 'named_entity')
+        annotations = document_annotations_with_type(self.doc, 'l3', 'named_entity')
         self.assertEqual(1, len(annotations))
 
         annotation = annotations[0]
@@ -187,7 +192,7 @@ class WebannoAddTokensAsSentenceTest(unittest.TestCase):
 
     def test_add_simple(self):
         tokens = ['This', 'is', 'a', 'sentence', '.']
-        sentence = self.doc.add_tokens_as_sentence(tokens)
+        sentence = document_add_tokens_as_sentence(self.doc, tokens)
 
         self.assertIsInstance(sentence, Sentence)
         self.assertEqual(1, sentence.idx)
@@ -207,7 +212,7 @@ class WebannoAddTokensAsSentenceTest(unittest.TestCase):
         # Example from the WebAnno TSV docs. The smiley should increment
         # the offset by two as it counts for two chars in UTF-16 (as used by Java).
         tokens = ['I', 'like', 'it', '😊', '.']
-        sentence = self.doc.add_tokens_as_sentence(tokens)
+        sentence = document_add_tokens_as_sentence(self.doc, tokens)
 
         self.assertEqual('😊', sentence.tokens[3].text)
         self.assertEqual(10, sentence.tokens[3].start)
@@ -220,8 +225,8 @@ class WebannoTsvWriteTest(unittest.TestCase):
 
     def test_complete_writing(self):
         doc = Document(DEFAULT_LAYERS)
-        s1 = doc.add_tokens_as_sentence(['First', 'sentence', '😊', '.'])
-        s2 = doc.add_tokens_as_sentence(['Second', 'sentence', 'escape[t]his;token', '.'])
+        s1 = document_add_tokens_as_sentence(doc, ['First', 'sentence', '😊', '.'])
+        s2 = document_add_tokens_as_sentence(doc, ['Second', 'sentence', 'escape[t]his;token', '.'])
 
         annotations = [
             Annotation([s1.tokens[0]], 'l1', 'pos', 'pos-val'),
@@ -238,8 +243,8 @@ class WebannoTsvWriteTest(unittest.TestCase):
         ]
 
         for annotation in annotations:
-            doc.add_annotation(annotation)
-        result = doc.tsv()
+            document_add_annotation(doc, annotation)
+        result = document_tsv(doc)
 
         expected = [
             '#FORMAT=WebAnno TSV 3.1',
@@ -264,15 +269,15 @@ class WebannoTsvWriteTest(unittest.TestCase):
 
     def test_label_id_is_added_on_writing(self):
         doc = Document(DEFAULT_LAYERS)
-        doc.add_tokens_as_sentence(['A', 'B', 'C', 'D'])
+        document_add_tokens_as_sentence(doc, ['A', 'B', 'C', 'D'])
 
         a_with_id = Annotation(doc.tokens[1:3], 'l3', 'named_entity', 'BC', 67)
         a_without = Annotation(doc.tokens[2:4], 'l3', 'named_entity', 'CD')
         a_single_token = Annotation(doc.tokens[3:4], 'l3', 'named_entity', 'D')
         for a in [a_with_id, a_without, a_single_token]:
-            doc.add_annotation(a)
+            document_add_annotation(doc, a)
 
-        doc_new = webanno_tsv_read_string(doc.tsv())
+        doc_new = webanno_tsv_read_string(document_tsv(doc))
 
         self.assertNotEqual(doc, doc_new)
         self.assertEqual(3, len(doc_new.annotations))
@@ -287,9 +292,9 @@ class WebannoTsvWriteTest(unittest.TestCase):
         with open(path, encoding='utf8', mode='r') as f:
             content = f.read().rstrip()
         doc = webanno_tsv_read_file(path)
-        self.assertEqual(content.splitlines(), doc.tsv().splitlines(),
+        self.assertEqual(content.splitlines(), document_tsv(doc).splitlines(),
                          'Output from file parsing should have the same lines as that file.')
 
         doc2 = webanno_tsv_read_string(content)
-        self.assertEqual(content.splitlines(), doc2.tsv().splitlines(),
+        self.assertEqual(content.splitlines(), document_tsv(doc2).splitlines(),
                          'Output from string parsing should have the same lines as that string.')
