@@ -1,0 +1,59 @@
+#FORMAT=WebAnno TSV 3.3
+#T_SP=webanno.custom.LetterEntity|entity_id|value
+#T_SP=webanno.custom.Tex|LayoutElement
+
+
+#Text=Braun an Gerhard Dresden, 10.
+1-1	0-5	Braun	*	PERauthor	_
+1-2	6-8	an	_	_	_
+1-3	9-16	Gerhard	*	PERaddressee	_
+1-4	17-24	Dresden	*	PLACEfrom	_
+1-5	24-25	,	_	_	_
+1-6	26-28	10	*[1]	DATEletter[1]	_
+1-7	28-29	.	*[1]	DATEletter[1]	_
+
+#Text=März 1832 (Zettel an den Brief geklebt) Die Intelligenzblätter habe ich zurückgehalten und sende nur den Brief.
+#Text=- Den Intelligenzblättern ist auf eine Anzeige der bald erscheinenden Bernhardischen Suidas sowie der Scriptores hist., August, beigelegt.
+2-1	30-34	März	*[1]	DATEletter[1]	_
+2-2	35-39	1832	*[1]	DATEletter[1]	_
+2-3	40-41	(	_	_	ANN[6]
+2-4	41-47	Zettel	_	_	ANN[6]
+2-5	48-50	an	_	_	ANN[6]
+2-6	51-54	den	_	_	ANN[6]
+2-7	55-60	Brief	_	_	ANN[6]
+2-8	61-68	geklebt	_	_	ANN[6]
+2-9	68-69	)	_	_	ANN[6]
+2-10	70-73	Die	_	_	_
+2-11	74-92	Intelligenzblätter	*	LIT	_
+2-12	93-97	habe	_	_	_
+2-13	98-101	ich	_	_	_
+2-14	102-116	zurückgehalten	_	_	_
+2-15	117-120	und	_	_	_
+2-16	121-126	sende	_	_	_
+2-17	127-130	nur	_	_	_
+2-18	131-134	den	_	_	_
+2-19	135-140	Brief	_	_	_
+2-20	140-141	.	_	_	_
+2-21	142-143	-	_	_	_
+2-22	144-147	Den	_	_	_
+2-23	148-167	Intelligenzblättern	*	LIT	_
+2-24	168-171	ist	_	_	_
+2-25	172-175	auf	_	_	_
+2-26	176-180	eine	_	_	_
+2-27	181-188	Anzeige	_	_	_
+2-28	189-192	der	_	_	_
+2-29	193-197	bald	_	_	_
+2-30	198-211	erscheinenden	_	_	_
+2-31	212-226	Bernhardischen	*[2]|*[3]	LIT[2]|per-mentioned[3]	_	
+2-31.1	212-220	Bernhard	*[3]	per-mentioned[3]	_	
+2-32	227-233	Suidas	*[2]	LIT[2]	_	
+2-33	234-239	sowie	_	_	_	
+2-34	240-243	der	_	_	_	
+2-35	244-254	Scriptores	*[4]	LIT[4]	_	
+2-36	255-259	hist	*[4]	LIT[4]	_	
+2-37	259-260	.	*[4]	LIT[4]	_	
+2-38	260-261	,	*[4]	LIT[4]	_	
+2-39	262-268	August	*[4]	LIT[4]	_	
+2-40	268-269	,	_	_	_	
+2-41	270-279	beigelegt	_	_	_	
+2-42	279-280	.	_	_	_

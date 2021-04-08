@@ -1,0 +1,17 @@
+*.idea/
+*.cache/
+
+# OS
+*.DS_Store
+
+# Python
+*.pyc
+*.pytest_cache
+*__pycache__/
+venv
+
+# Jupyter notebook
+*-checkpoint.ipynb
+
+# Lock files
+.~lock*
