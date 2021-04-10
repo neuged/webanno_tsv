@@ -58,7 +58,8 @@ class Token:
 
 def _unsafe_token_sort(tokens: Iterable[Token]) -> Iterable[Token]:
     # this is unsafe in that it doesn't check the tokens' document is the same.
-    return sorted(tokens, key=lambda t: (t.sentence.idx * len(t.doc.tokens) + t.idx))
+    offset = max(t.idx for t in tokens) + 1
+    return sorted(tokens, key=lambda t: (t.sentence.idx * offset) + t.idx)
 
 
 def token_sort(tokens: Iterable[Token]) -> Iterable[Token]:
