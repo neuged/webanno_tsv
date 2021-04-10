@@ -1,9 +1,12 @@
 import csv
+import itertools
 import logging
 import re
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Tuple
+
+from iteration_utilities import duplicates
 
 NO_LABEL_ID = -1
 
@@ -220,13 +223,18 @@ def document_fix_annotation_ids(doc: Document) -> None:
     After this, there should be no duplicate label id and every multi-token
     annotation should have an id. Leave present label_ids unchanged if possible.
     """
-    max_id = max([a.label_id for a in doc.annotations], default=1)
-    ids_seen = set()
-    for a in doc.annotations:
-        if len(a.tokens) > 1 and (a.label_id == NO_LABEL_ID or a.label_id in ids_seen):
-            a.label_id = max_id + 1
-            max_id = a.label_id
-        ids_seen.add(a.label_id)
+    with_ids = (a for a in doc.annotations if a.label_id != NO_LABEL_ID)
+    repeated_ids = duplicates(with_ids, key=lambda a: a.label_id)
+    missing_ids = {a for a in doc.annotations if len(a.tokens) > 1 and a.label_id == NO_LABEL_ID}
+    both = missing_ids.union(repeated_ids)
+    if both:
+        max_id = max((a.label_id for a in doc.annotations), default=1)
+        for a, new_id in zip(both, itertools.count(max_id + 1)):
+            a.label_id = new_id
+
+
+def utf_16_length(s: str) -> int:
+    return int(len(s.encode('utf-16-le')) / 2)
 
 
 def document_add_tokens_as_sentence(doc: Document, tokens: List[str]) -> Sentence:
@@ -239,16 +247,19 @@ def document_add_tokens_as_sentence(doc: Document, tokens: List[str]) -> Sentenc
     :param tokens: The tokenized version of param text.
     :return: A Sentence instance.
     """
-    text = " ".join(tokens)
-    sentence = Sentence(doc=doc, idx=doc.next_sentence_idx, text=text)
+    sentence = Sentence(doc=doc, idx=doc.next_sentence_idx, text=' '.join(tokens))
 
-    for token_idx, token_text in enumerate(tokens, start=1):
-        token_utf16_length = int(len(token_text.encode('utf-16-le')) / 2)
-        end = doc.next_token_idx + token_utf16_length
-        token = Token(sentence=sentence, idx=token_idx, start=doc.next_token_idx, end=end, text=token_text)
+    utf_16_lens = list(map(utf_16_length, tokens))
+    starts = [(sum(utf_16_lens[:i])) for i in range(len(utf_16_lens))]
+    starts = [s + i for i, s in enumerate(starts)]  # offset the ' ' we added above
+    starts = [s + doc.next_token_idx for s in starts]
+    stops = [s + length for s, length in zip(starts, utf_16_lens)]
+
+    for i, (start, stop, text) in enumerate(zip(starts, stops, tokens)):
+        token = Token(sentence=sentence, idx=i + 1, start=start, end=stop, text=text)
         sentence_add_token(sentence, token)
-        doc.next_token_idx = end + 1
     document_add_sentence(doc, sentence)
+    doc.next_token_idx = stops[-1] + 1
     return sentence
 
 
@@ -328,6 +339,20 @@ def _read_token(doc: Document, row: Dict) -> Token:
     return token
 
 
+def _read_annotation_field(row: Dict, layer: str, field: str) -> List[str]:
+    col_name = _annotation_type(layer, field)
+    return row[col_name].split('|') if row[col_name] else []
+
+
+def _read_layer(token: Token, row: Dict, layer: str, fields: List[str]) -> List[Annotation]:
+    fields_values = [(field, val) for field in fields for val in _read_annotation_field(row, layer, field)]
+    fields_labels_ids = [(f, _read_label_and_id(val)) for f, val in fields_values]
+    fields_labels_ids = [(f, label, lid) for (f, (label, lid)) in fields_labels_ids if label != '']
+
+    return [Annotation(tokens=[token], layer_name=layer, field_name=field, label=label, label_id=lid) for
+            field, label, lid in fields_labels_ids]
+
+
 def _read_label_and_id(field: str) -> Tuple[str, int]:
     """
     Reads a Webanno TSV field value, returning a label and an id.
@@ -357,15 +382,10 @@ def _filter_sentences(lines: List[str]) -> List[str]:
     Filter lines beginning with 'Text=', if multiple such lines are
     following each other, concatenate them.
     """
-    result = []
     matches = [SENTENCE_RE.match(line) for line in lines]
-    for i, match in enumerate(matches):
-        if match:
-            if i > 0 and matches[i - 1]:
-                result[-1] += MULTILINE_SPLIT_CHAR + match.group(1)
-            else:
-                result.append(match.group(1))
-    return result
+    match_groups = [list(ms) for is_m, ms in itertools.groupby(matches, key=lambda m: m is not None) if is_m]
+    text_groups = [[m.group(1) for m in group] for group in match_groups]
+    return [MULTILINE_SPLIT_CHAR.join(group) for group in text_groups]
 
 
 def _tsv_read_lines(lines: List[str], overriding_layer_names: List[Tuple[str, List[str]]] = None) -> Document:
@@ -379,32 +399,18 @@ def _tsv_read_lines(lines: List[str], overriding_layer_names: List[Tuple[str, Li
         doc = Document(_read_span_layer_names(lines))
 
     for i, text in enumerate(sentences):
-        sentence = Sentence(doc, idx=i + 1, text=text)
-        document_add_sentence(doc, sentence)
+        document_add_sentence(doc, Sentence(doc, idx=i + 1, text=text))
 
-    span_columns = [layer + '~' + field for layer, fields in doc.layer_names for field in fields]
+    span_columns = [_annotation_type(layer, field) for layer, fields in doc.layer_names for field in fields]
     rows = csv.DictReader(token_data, dialect=WebannoTsvDialect, fieldnames=TOKEN_FIELDNAMES + span_columns)
+
     for row in rows:
-        # The first three columns in each line make up a Token
+        # consume the first three columns of each line
         token = _read_token(doc, row)
         # Each column after the first three is (part of) a span annotation layer
         for layer, fields in doc.layer_names:
-            for field in fields:
-                col_name = layer + '~' + field
-                if row[col_name] is None:
-                    continue
-                values = row[col_name].split('|')
-                for value in values:
-                    label, label_id = _read_label_and_id(value)
-                    if label != '':
-                        a = Annotation(
-                            tokens=[token],
-                            label=label,
-                            layer_name=layer,
-                            field_name=field,
-                            label_id=label_id,
-                        )
-                        document_add_annotation(doc, a)
+            for annotation in _read_layer(token, row, layer, fields):
+                document_add_annotation(doc, annotation)
     return doc
 
 
@@ -452,49 +458,53 @@ def _annotations_for_token(token: Token, layer: str, field: str) -> List[Annotat
     return [a for a in document_annotations_with_type(doc, layer, field) if token in a.tokens]
 
 
-def _write_annotation_label(annotation: Annotation) -> str:
-    label = _escape(annotation.label)
-    if annotation.label_id == NO_LABEL_ID:
+def _write_annotation_label(label: Optional[str], label_id: int) -> str:
+    if not label:
+        label = '*'
+    else:
+        label = _escape(label)
+    if label_id == NO_LABEL_ID:
         return label
     else:
-        return f'{label}[{annotation.label_id}]'
+        return f'{label}[{label_id}]'
 
 
-def _write_annotation_layer_fields(token: Token, layer_name: str, field_names: List[str]) -> List[str]:
-    all_annotations = []
-    for field in field_names:
-        all_annotations += _annotations_for_token(token, layer_name, field)
+def _write_annotation_field(annotations_in_layer: Iterable[Annotation], field: str) -> str:
+    if not annotations_in_layer:
+        return '_'
 
-    # If there are no annotations for this layer '-' is returned for each column
-    if not all_annotations:
-        return ['_'] * len(field_names)
+    with_field_val = {(a.label, a.label_id) for a in annotations_in_layer if a.field_name == field}
 
-    all_ids = {a.label_id for a in all_annotations}
-    all_ids = all_ids - {NO_LABEL_ID}
-    fields = []
-    for field in field_names:
-        annotations = [a for a in all_annotations if a.field_name == field]
-        labels = []
+    all_ids = {a.label_id for a in annotations_in_layer if a.label_id != NO_LABEL_ID}
+    ids_used = {label_id for _, label_id in with_field_val}
+    without_field_val = {(None, label_id) for label_id in all_ids - ids_used}
 
-        # first write annotations without label_ids
-        for annotation in [a for a in annotations if a.label_id == NO_LABEL_ID]:
-            labels.append(_write_annotation_label(annotation))
+    labels = [_write_annotation_label(label, lid) for label, lid in
+              sorted(with_field_val.union(without_field_val), key=lambda t: t[1])]
 
-        # next we treat id'ed annotations, that need id'ed indicators in columns where no
-        # annotation for the id is present
-        for lid in sorted(all_ids):
-            try:
-                annotation = next(a for a in annotations if a.label_id == lid)
-                labels.append(_write_annotation_label(annotation))
-            except StopIteration:
-                labels.append('*' if lid == NO_LABEL_ID else f'*[{lid}]')
+    if not labels:
+        return '*'
+    return '|'.join(labels)
 
-        if not labels:
-            labels.append('*')
 
-        fields.append('|'.join(labels))
+def _write_annotation_fields(token: Token, layer_name: str, field_names: List[str]) -> List[str]:
+    annotations = {a for field in field_names for a in _annotations_for_token(token, layer_name, field)}
+    return [_write_annotation_field(annotations, field) for field in field_names]
 
-    return fields
+
+def _write_sentence_header(text: str) -> List[str]:
+    return ['', f'#Text={_escape(text)}']
+
+
+def _write_token(token: Token) -> str:
+    line = [
+        f'{token.sentence.idx}-{token.idx}',
+        f'{token.start}-{token.end}',
+        _escape(token.text),
+    ]
+    for layer, fields in token.doc.layer_names:
+        line += _write_annotation_fields(token, layer, fields)
+    return '\t'.join(line)
 
 
 def webanno_tsv_write(doc: Document, linebreak='\n') -> str:
@@ -507,17 +517,8 @@ def webanno_tsv_write(doc: Document, linebreak='\n') -> str:
     document_fix_annotation_ids(doc)
 
     for sentence in doc.sentences:
-        lines.append('')
-        lines.append(f'#Text={_escape(sentence.text)}')
-
+        lines += _write_sentence_header(sentence.text)
         for token in sentence.tokens:
-            line = [
-                f'{sentence.idx}-{token.idx}',
-                f'{token.start}-{token.end}',
-                _escape(token.text),
-            ]
-            for layer, fields in doc.layer_names:
-                line += _write_annotation_layer_fields(token, layer, fields)
-            lines.append('\t'.join(line))
+            lines.append(_write_token(token))
 
     return linebreak.join(lines)
