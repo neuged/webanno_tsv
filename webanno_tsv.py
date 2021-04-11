@@ -63,12 +63,11 @@ def _unsafe_token_sort(tokens: Iterable[Token]) -> Iterable[Token]:
 
 
 def token_sort(tokens: Iterable[Token]) -> Iterable[Token]:
-    if tokens:
-        if not len(set(t.doc for t in tokens)) == 1:
-            raise ValueError('Cannot sort tokens in different documents')
-        return _unsafe_token_sort(tokens)
-    else:
-        return tokens
+    if not tokens:
+        return []
+    if len(set(t.doc for t in tokens)) != 1:
+        raise ValueError('Cannot sort tokens in different documents')
+    return _unsafe_token_sort(tokens)
 
 
 def token_is_at_begin_of_sentence(token: Token) -> bool:
@@ -273,19 +272,20 @@ def document_add_sentence(self, sentence: Sentence):
     self.sentences.append(sentence)
 
 
+def merge_candidate(doc: Document, annotation: Annotation) -> Optional[Annotation]:
+    if annotation.label_id == NO_LABEL_ID:
+        return None
+    else:
+        return next((a for a in doc.annotations if a.label_id == annotation.label_id), None)
+
+
 def document_add_annotation(doc: Document, annotation: Annotation):
-    merged = False
-    type_name = _annotation_type(annotation.layer_name, annotation.field_name)
-    # check if we should merge with an existing annotation
-    if annotation.label_id != NO_LABEL_ID:
-        same_type = document_annotations_with_type(doc, annotation.layer_name, annotation.field_name)
-        same_id = [a for a in same_type if a.label_id == annotation.label_id]
-        assert (len(same_id)) <= 1
-        if len(same_id) > 0:
-            annotation_merge_other(same_id[0], annotation)
-            merged = True
-    if not merged:
-        assert (annotation.doc == doc)
+    assert (annotation.doc == doc)
+    candidate = merge_candidate(doc, annotation)
+    if candidate:
+        annotation_merge_other(candidate, annotation)
+    else:
+        type_name = _annotation_type(annotation.layer_name, annotation.field_name)
         doc.annotation_by_type[type_name].append(annotation)
 
 
@@ -364,18 +364,15 @@ def _read_label_and_id(field: str) -> Tuple[str, int]:
         "_"      -> ("", None)
         "*[6]"   -> ("", 6)
     """
+
+    def handle_label(s: str):
+        return '' if FIELD_EMPTY_RE.match(s) else _unescape(s)
+
     match = FIELD_WITH_ID_RE.match(field)
     if match:
-        label = match.group(1)
-        label_id = int(match.group(2))
+        return handle_label(match.group(1)), int(match.group(2))
     else:
-        label = field
-        label_id = NO_LABEL_ID
-
-    if FIELD_EMPTY_RE.match(label):
-        label = ''
-
-    return _unescape(label), label_id
+        return handle_label(field), NO_LABEL_ID
 
 
 def _filter_sentences(lines: List[str]) -> List[str]:
@@ -459,15 +456,16 @@ def _annotations_for_token(token: Token, layer: str, field: str) -> List[Annotat
     return [a for a in document_annotations_with_type(doc, layer, field) if token in a.tokens]
 
 
-def _write_annotation_label(label: Optional[str], label_id: int) -> str:
-    if not label:
-        label = '*'
-    else:
-        label = _escape(label)
-    if label_id == NO_LABEL_ID:
-        return label
-    else:
-        return f'{label}[{label_id}]'
+def _write_label(label: Optional[str]):
+    return _escape(label) if label else '*'
+
+
+def _write_label_id(lid: int):
+    return '' if lid == NO_LABEL_ID else '[%d]' % lid
+
+
+def _write_label_and_id(label: Optional[str], label_id: int) -> str:
+    return _write_label(label) + _write_label_id(label_id)
 
 
 def _write_annotation_field(annotations_in_layer: Iterable[Annotation], field: str) -> str:
@@ -480,12 +478,12 @@ def _write_annotation_field(annotations_in_layer: Iterable[Annotation], field: s
     ids_used = {label_id for _, label_id in with_field_val}
     without_field_val = {(None, label_id) for label_id in all_ids - ids_used}
 
-    labels = [_write_annotation_label(label, lid) for label, lid in
-              sorted(with_field_val.union(without_field_val), key=lambda t: t[1])]
-
+    both = sorted(with_field_val.union(without_field_val), key=lambda t: t[1])
+    labels = [_write_label_and_id(label, lid) for label, lid in both]
     if not labels:
         return '*'
-    return '|'.join(labels)
+    else:
+        return '|'.join(labels)
 
 
 def _write_annotation_fields(token: Token, layer_name: str, field_names: List[str]) -> List[str]:
