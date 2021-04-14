@@ -4,11 +4,10 @@ import unittest
 from webanno_tsv import (
     webanno_tsv_read_file, webanno_tsv_read_string,
     Annotation, Document, Sentence, Token,
-    document_add_annotation,
-    document_add_tokens_as_sentence,
-    document_annotations_with_type,
+    document_add_token_strs,
     document_tsv,
-    sentence_annotations_with_type,
+    document_filter_annotations,
+    sentence_tokens,
     NO_LABEL_ID
 )
 
@@ -34,8 +33,7 @@ class WebannoTsvModelTest(unittest.TestCase):
 
     def test_doc_tokens(self):
         strings = ['A', 'sentence', 'to', 'add', '.']
-        doc = Document()
-        document_add_tokens_as_sentence(doc, strings)
+        doc = document_add_token_strs(Document(), strings)
         self.assertEqual(5, len(doc.tokens))
         self.assertEqual(strings, [t.text for t in doc.tokens])
 
@@ -76,7 +74,7 @@ class WebannoTsvReadRegularFilesTest(unittest.TestCase):
                        (snd, 14, 164, 169, "Kampf"),
                        (snd, 21, 204, 205, ".")]
         for sentence, idx, start, end, text in spot_checks:
-            token = sentence.tokens[idx - 1]
+            token = sentence_tokens(self.doc, sentence)[idx - 1]
             self.assertEqual(idx, token.idx)
             self.assertEqual(start, token.start)
             self.assertEqual(end, token.end)
@@ -85,10 +83,10 @@ class WebannoTsvReadRegularFilesTest(unittest.TestCase):
     def test_reads_correct_annotations(self):
         _, snd = self.doc.sentences
 
-        poss = sentence_annotations_with_type(snd, 'l1', 'pos')
-        lemmas = sentence_annotations_with_type(snd, 'l2', 'lemma')
-        entity_ids = sentence_annotations_with_type(snd, 'l3', 'entity_id')
-        named_entities = sentence_annotations_with_type(snd, 'l3', 'named_entity')
+        poss = document_filter_annotations(self.doc, snd, 'l1', 'pos')
+        lemmas = document_filter_annotations(self.doc, snd, 'l2', 'lemma')
+        entity_ids = document_filter_annotations(self.doc, snd, 'l3', 'entity_id')
+        named_entities = document_filter_annotations(self.doc, snd, 'l3', 'named_entity')
 
         self.assertEqual(21, len(poss))
         self.assertEqual(22, len(lemmas))
@@ -136,10 +134,10 @@ class WebannoTsvReadFileWithFormatV33(unittest.TestCase):
         self.assertEqual(self.TEXT_SENT_2, self.doc.sentences[1].text)
 
     def test_reads_annotations_correctly(self):
-        self.assertEqual(9, len(document_annotations_with_type(self.doc, 'l1', 'named_entity')))
-        self.assertEqual(1, len(document_annotations_with_type(self.doc, 'l2', 'tex_layout')))
+        self.assertEqual(9, len(document_filter_annotations(self.doc, layer='l1', field='named_entity')))
+        self.assertEqual(1, len(document_filter_annotations(self.doc, layer='l2', field='tex_layout')))
 
-        annotations = document_annotations_with_type(self.doc, 'l1', 'named_entity')
+        annotations = document_filter_annotations(self.doc, layer='l1', field='named_entity')
         spot_checks = [
             (0, 'PERauthor', -1, 'Braun'),
             (3, 'DATEletter', 1, '10 . März 1832'),
@@ -155,14 +153,14 @@ class WebannoTsvReadActualFileHeaders(unittest.TestCase):
 
     def test_headers_from_input_file(self):
         doc = webanno_tsv_read_file(test_file('test_input.tsv'))
-        self.assertEqual(ACTUAL_DEFAULT_LAYER_NAMES, doc.layer_names)
+        self.assertEqual(ACTUAL_DEFAULT_LAYER_NAMES, doc.layer_defs)
 
 
 class WebannoTsvReadFileWithQuotesTest(unittest.TestCase):
 
     def test_reads_quotes(self):
-        self.doc = webanno_tsv_read_file(test_file('test_input_quotes.tsv'), DEFAULT_LAYERS)
-        tokens = self.doc.sentences[0].tokens
+        doc = webanno_tsv_read_file(test_file('test_input_quotes.tsv'), DEFAULT_LAYERS)
+        tokens = sentence_tokens(doc, doc.sentences[0])
 
         self.assertEqual('\"', tokens[3].text)
         self.assertEqual('\"', tokens[5].text)
@@ -173,77 +171,71 @@ class WebannoTsvReadFileWithMultiSentenceSpanAnnotation(unittest.TestCase):
 
     def test_read_multi_sentence_annotation(self):
         self.doc = webanno_tsv_read_file(test_file('test_input_multi_sentence_span.tsv'), DEFAULT_LAYERS)
-        fst, snd = self.doc.sentences
 
-        annotations = document_annotations_with_type(self.doc, 'l3', 'named_entity')
+        annotations = document_filter_annotations(self.doc, layer='l3', field='named_entity')
         self.assertEqual(1, len(annotations))
 
         annotation = annotations[0]
         self.assertEqual(66, annotation.label_id)
         self.assertEqual(2, len(annotation.tokens))
         self.assertEqual(['annotation-begin', 'annotation-end'], annotation.token_texts)
-        self.assertEqual([fst, snd], annotation.sentences)
 
 
 class WebannoAddTokensAsSentenceTest(unittest.TestCase):
 
-    def setUp(self) -> None:
-        self.doc = Document()
-
     def test_add_simple(self):
         tokens = ['This', 'is', 'a', 'sentence', '.']
-        sentence = document_add_tokens_as_sentence(self.doc, tokens)
+        doc = document_add_token_strs(Document(), tokens)
+        sentence = doc.sentences[0]
 
         self.assertIsInstance(sentence, Sentence)
         self.assertEqual(1, sentence.idx)
         self.assertEqual('This is a sentence .', sentence.text)
-        self.assertEqual([sentence], self.doc.sentences)
+        self.assertEqual([sentence], doc.sentences)
 
         expected_tokens = [
-            Token(sentence, 1, 0, 4, 'This'),
-            Token(sentence, 2, 5, 7, 'is'),
-            Token(sentence, 3, 8, 9, 'a'),
-            Token(sentence, 4, 10, 18, 'sentence'),
-            Token(sentence, 5, 19, 20, '.'),
+            Token(sentence_idx=sentence.idx, idx=1, start=0, end=4, text='This'),
+            Token(sentence_idx=sentence.idx, idx=2, start=5, end=7, text='is'),
+            Token(sentence_idx=sentence.idx, idx=3, start=8, end=9, text='a'),
+            Token(sentence_idx=sentence.idx, idx=4, start=10, end=18, text='sentence'),
+            Token(sentence_idx=sentence.idx, idx=5, start=19, end=20, text='.'),
         ]
-        self.assertEqual(expected_tokens, sentence.tokens)
+        self.assertEqual(expected_tokens, sentence_tokens(doc, sentence))
 
     def test_add_unicode_text(self):
         # Example from the WebAnno TSV docs. The smiley should increment
         # the offset by two as it counts for two chars in UTF-16 (as used by Java).
         tokens = ['I', 'like', 'it', '😊', '.']
-        sentence = document_add_tokens_as_sentence(self.doc, tokens)
+        doc = document_add_token_strs(Document(), tokens)
 
-        self.assertEqual('😊', sentence.tokens[3].text)
-        self.assertEqual(10, sentence.tokens[3].start)
-        self.assertEqual(12, sentence.tokens[3].end)
-        self.assertEqual('.', sentence.tokens[4].text)
-        self.assertEqual(13, sentence.tokens[4].start)
+        self.assertEqual('😊', doc.tokens[3].text)
+        self.assertEqual(10, doc.tokens[3].start)
+        self.assertEqual(12, doc.tokens[3].end)
+        self.assertEqual('.', doc.tokens[4].text)
+        self.assertEqual(13, doc.tokens[4].start)
 
 
 class WebannoTsvWriteTest(unittest.TestCase):
 
     def test_complete_writing(self):
-        doc = Document(DEFAULT_LAYERS)
-        s1 = document_add_tokens_as_sentence(doc, ['First', 'sentence', '😊', '.'])
-        s2 = document_add_tokens_as_sentence(doc, ['Second', 'sentence', 'escape[t]his;token', '.'])
+        doc = Document(layer_defs=DEFAULT_LAYERS)
+        doc = document_add_token_strs(doc, ['First', 'sentence', '😊', '.'])
+        doc = document_add_token_strs(doc, ['Second', 'sentence', 'escape[t]his;token', '.'])
 
         annotations = [
-            Annotation([s1.tokens[0]], 'l1', 'pos', 'pos-val'),
-            Annotation([s1.tokens[0]], 'l2', 'lemma', 'first'),
-            Annotation([s1.tokens[1]], 'l2', 'lemma', 'sentence'),
-            Annotation([s1.tokens[2]], 'l3', 'named_entity', 'smiley-end', 37),
-            Annotation([s1.tokens[3]], 'l3', 'named_entity', 'smiley-end', 37),
-            Annotation([s1.tokens[3]], 'l3', 'named_entity', 'DOT'),
-            Annotation([s2.tokens[3]], 'l1', 'pos', 'dot'),
-            Annotation([s2.tokens[1]], 'l2', 'lemma', 'sentence'),
-            Annotation([s2.tokens[3]], 'l2', 'lemma', '.'),
-            Annotation([s2.tokens[0]], 'l3', 'named_entity', 'XYZ'),
-            Annotation([s2.tokens[2]], 'l3', 'named_entity', 'escape|this\\field'),
+            Annotation(tokens=doc.tokens[0:1], layer='l1', field='pos', label='pos-val'),
+            Annotation(tokens=doc.tokens[0:1], layer='l2', field='lemma', label='first'),
+            Annotation(tokens=doc.tokens[1:2], layer='l2', field='lemma', label='sentence'),
+            Annotation(tokens=doc.tokens[2:4], layer='l3', field='named_entity', label='smiley-end', label_id=37),
+            Annotation(tokens=doc.tokens[3:4], layer='l3', field='named_entity', label='DOT'),
+            Annotation(tokens=doc.tokens[7:8], layer='l1', field='pos', label='dot'),
+            Annotation(tokens=doc.tokens[5:6], layer='l2', field='lemma', label='sentence'),
+            Annotation(tokens=doc.tokens[7:8], layer='l2', field='lemma', label='.'),
+            Annotation(tokens=doc.tokens[4:5], layer='l3', field='named_entity', label='XYZ'),
+            Annotation(tokens=doc.tokens[6:7], layer='l3', field='named_entity', label='escape|this\\field'),
         ]
 
-        for annotation in annotations:
-            document_add_annotation(doc, annotation)
+        doc = doc.set(annotations=annotations)
         result = document_tsv(doc)
 
         expected = [
@@ -268,14 +260,13 @@ class WebannoTsvWriteTest(unittest.TestCase):
         self.assertEqual(expected, result.split('\n'))
 
     def test_label_id_is_added_on_writing(self):
-        doc = Document(DEFAULT_LAYERS)
-        document_add_tokens_as_sentence(doc, ['A', 'B', 'C', 'D'])
+        doc = Document(layer_defs=DEFAULT_LAYERS)
+        doc = document_add_token_strs(doc, ['A', 'B', 'C', 'D'])
 
-        a_with_id = Annotation(doc.tokens[1:3], 'l3', 'named_entity', 'BC', 67)
-        a_without = Annotation(doc.tokens[2:4], 'l3', 'named_entity', 'CD')
-        a_single_token = Annotation(doc.tokens[3:4], 'l3', 'named_entity', 'D')
-        for a in [a_with_id, a_without, a_single_token]:
-            document_add_annotation(doc, a)
+        a_with_id = Annotation(tokens=doc.tokens[1:3], layer='l3', field='named_entity', label='BC', label_id=67)
+        a_without = Annotation(tokens=doc.tokens[2:4], layer='l3', field='named_entity', label='CD')
+        a_single_token = Annotation(tokens=doc.tokens[3:4], layer='l3', field='named_entity', label='D')
+        doc = doc.set(annotations=[a_with_id, a_without, a_single_token])
 
         doc_new = webanno_tsv_read_string(document_tsv(doc))
 
