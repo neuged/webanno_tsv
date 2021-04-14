@@ -2,14 +2,9 @@ import csv
 import itertools
 import logging
 import re
-from typing import Dict, Iterable, List, Optional, Sequence, Set,Tuple
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
-from iteration_utilities import duplicates
-from pyrsistent import (
-    PClass,
-    field as pfield,  # because we use field as var name often and do not want to shadow it
-    pvector_field
-)
+from pyrsistent import PClass, field as pfield, pvector_field
 
 NO_LABEL_ID = -1
 
@@ -50,17 +45,6 @@ class Token(PClass):
     text = pfield(str)
 
 
-def token_sort(tokens: Iterable[Token]) -> Iterable[Token]:
-    if not tokens:
-        return []
-    offset = max(t.idx for t in tokens) + 1
-    return sorted(tokens, key=lambda t: (t.sentence_idx * offset) + t.idx)
-
-
-def token_sentence(doc: 'Document', token: Token):
-    return next(s for s in doc.sentences if token in sentence_tokens(doc, s))
-
-
 class Annotation(PClass):
     tokens = pvector_field(Token)
     layer = pfield(str)
@@ -93,29 +77,9 @@ class Annotation(PClass):
                and self.set(tokens=[]) == other.set(tokens=[])
 
 
-def annotation_merge_other(a: Annotation, other: Annotation) -> Annotation:
-    return a.set(tokens=token_sort(a.tokens + other.tokens))
-
-
-def _annotation_type(layer_name, field_name):
-    return '|'.join([layer_name, field_name])
-
-
 class Sentence(PClass):
     idx = pfield(int)
     text = pfield(str)
-
-
-def sentence_is_following(s: Sentence, other: Sentence) -> bool:
-    return s.idx == (other.idx + 1)
-
-
-def sentence_is_followed_by(s: Sentence, other: Sentence) -> bool:
-    return sentence_is_following(other, s)
-
-
-def sentence_tokens(doc, sentence) -> Sequence[Token]:
-    return [t for t in doc.tokens if t.sentence_idx == sentence.idx]
 
 
 class Document(PClass):
@@ -153,8 +117,39 @@ class Document(PClass):
         return "\n".join([s.text for s in self.sentences])
 
 
+def token_sort(tokens: Iterable[Token]) -> Iterable[Token]:
+    if not tokens:
+        return []
+    offset = max(t.idx for t in tokens) + 1
+    return sorted(tokens, key=lambda t: (t.sentence_idx * offset) + t.idx)
+
+
+def token_sentence(doc: 'Document', token: Token):
+    return next(s for s in doc.sentences if token in sentence_tokens(doc, s))
+
+
+def annotations_merge(a: Annotation, *other: Annotation) -> Annotation:
+    return a.set(tokens=token_sort(list(a.tokens) + [t for o in other for t in o.tokens]))
+
+
+def _annotation_type(layer_name, field_name):
+    return '|'.join([layer_name, field_name])
+
+
 def annotation_sentences(doc: Document, annotation: Annotation) -> Iterable[Sentence]:
     return {token_sentence(doc, t) for t in annotation.tokens}
+
+
+def sentence_is_following(s: Sentence, other: Sentence) -> bool:
+    return s.idx == (other.idx + 1)
+
+
+def sentence_is_followed_by(s: Sentence, other: Sentence) -> bool:
+    return sentence_is_following(other, s)
+
+
+def sentence_tokens(doc, sentence) -> Sequence[Token]:
+    return [t for t in doc.tokens if t.sentence_idx == sentence.idx]
 
 
 def document_filter_annotations(doc: Document, sentence: Sentence = None, layer='', field='') -> Sequence[Annotation]:
@@ -170,14 +165,14 @@ def document_filter_annotations(doc: Document, sentence: Sentence = None, layer=
 
 def fix_annotation_ids(annotations: Sequence[Annotation]) -> Sequence[Annotation]:
     """
-    Setup label ids for annotations contained in this document to be consistent.
+    Setup label ids for the annotations to be consistent in the group.
     After this, there should be no duplicate label id and every multi-token
-    annotation should have an id. Leave present label_ids unchanged if possible.
+    annotation should have an id. Leaves present label_ids unchanged if possible.
     """
     with_ids = (a for a in annotations if a.label_id != NO_LABEL_ID)
-    repeated_ids = duplicates(with_ids, key=lambda a: a.label_id)
-    missing_ids = {a for a in annotations if len(a.tokens) > 1 and a.label_id == NO_LABEL_ID}
-    both = missing_ids.union(repeated_ids)
+    with_repeated_ids = {a for a in with_ids if a.label_id in [a2.label_id for a2 in with_ids if a2 != a]}
+    without_ids = {a for a in annotations if len(a.tokens) > 1 and a.label_id == NO_LABEL_ID}
+    both = without_ids.union(with_repeated_ids)
     if both:
         max_id = max((a.label_id for a in annotations), default=1)
         new_ids = itertools.count(max_id + 1)
@@ -232,7 +227,7 @@ def merge_candidate(candidates: Sequence[Annotation], annotation: Annotation) ->
 def merge_into_annotations(annotations: Sequence[Annotation], annotation: Annotation) -> Sequence[Annotation]:
     candidate = merge_candidate(annotations, annotation)
     if candidate:
-        merged = annotation_merge_other(candidate, annotation)
+        merged = annotations_merge(candidate, annotation)
         return [a if a != candidate else merged for a in annotations]
     else:
         return [*annotations, annotation]
