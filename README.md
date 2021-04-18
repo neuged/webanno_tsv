@@ -1,23 +1,29 @@
 
 # webanno_tsv
 
-A Library to parse TSV files as produced by the [webanno Software](https://github.com/webanno/webanno) and as described [in their documentation](https://zoidberg.ukp.informatik.tu-darmstadt.de/jenkins/job/WebAnno%20%28GitHub%29%20%28master%29/de.tudarmstadt.ukp.clarin.webanno$webanno-webapp/doclinks/1/#sect_webannotsv).1
+A Library to parse TSV files as produced by the [webanno Software](https://github.com/webanno/webanno) and as described [in their documentation](https://zoidberg.ukp.informatik.tu-darmstadt.de/jenkins/job/WebAnno%20%28GitHub%29%20%28master%29/de.tudarmstadt.ukp.clarin.webanno$webanno-webapp/doclinks/1/#sect_webannotsv).
 
 The following features are supported:
 
-* WebAnnos UTF-16 indices for Text indices
-* Webannos [escape sequences](https://zoidberg.ukp.informatik.tu-darmstadt.de/jenkins/job/WebAnno%20%28GitHub%29%20%28master%29/de.tudarmstadt.ukp.clarin.webanno$webanno-webapp/doclinks/1/#_reserved_characters)
+* WebAnno's UTF-16 indices for Text indices
+* Webanno's [escape sequences](https://zoidberg.ukp.informatik.tu-darmstadt.de/jenkins/job/WebAnno%20%28GitHub%29%20%28master%29/de.tudarmstadt.ukp.clarin.webanno$webanno-webapp/doclinks/1/#_reserved_characters)
 * Multiple span annotation layers with multiple fields
 * Span annotations over multiple tokens and sentences
 * Multiple Annotations per field (stacked annotations)
 * Disambiguation IDs (here called `label_id`)
 
-The following is not supported:
+The following is __not supported__:
 
 * Relations
 * Chain annotations
 * Sub-Token annotations (ignored on reading)
 
+
+## Installation
+
+```sh
+pip install git+https://github.com/neuged/webanno_tsv
+```
 
 ## Examples
 
@@ -93,7 +99,7 @@ doc.sentence_tokens(doc.sentence[0])
 doc.annotation_sentences(doc.annotations[0])
 ```
 
-The classes in this library are read-only dataclasses ([dataclasses with `frozen=True`](https://docs.python.org/3/library/dataclasses.html#dataclasses.dataclass)).
+__Possible Gotcha__: The classes in this library are read-only dataclasses ([dataclasses with `frozen=True`](https://docs.python.org/3/library/dataclasses.html#dataclasses.dataclass)).
 
 This means that their fields are not settable. You can create new versions however with [`dataclasses.replace()`](https://docs.python.org/3/library/dataclasses.html#dataclasses.replace).
 
