@@ -34,12 +34,6 @@ class WebannoTsvDialect(csv.Dialect):
 
 
 @dataclass(frozen=True)
-class Sentence:
-    idx: int
-    text: str
-
-
-@dataclass(frozen=True)
 class Token:
     sentence_idx: int
     idx: int
@@ -48,7 +42,13 @@ class Token:
     text: str
 
 
-@dataclass(frozen=True, eq=False)
+@dataclass(frozen=True)
+class Sentence:
+    idx: int
+    text: str
+
+
+@dataclass(frozen=True, eq=False)  # Annotations are compared/hashed base on object identity
 class Annotation:
     tokens: Sequence[Token]
     layer: str
@@ -90,7 +90,11 @@ class Annotation:
 @dataclass(frozen=True, eq=False)
 class Document:
     """
-    Create a new document using the given keys as annotation layer names.
+    Document binds together text features (Token, Sentence) with Annotations
+    over the text. layer definitions is a tuple of layer and field names that
+    defines the annotation.layer and annotation.field names when reading tsv.
+    When writing, the layer definitions define which annotations are written
+    and in what order.
 
     Example:
     Given a tsv file with lines like these:
@@ -102,11 +106,15 @@ class Document:
         [ ('l1', ['POS']),
           ('l2', ['category', 'opinion']) ]
 
-    allowing you to retrieve e.g. an annotation for 'negative' within:
+    allowing you to retrieve the annotation for 'abstract' within:
 
-        doc.annotations_with_type('l2', 'opinion')
+        doc.match_annotations(layer='l2', field='category')
 
-    Layer names are also used to output '#T_SP=' fields in the tsv.
+    If you want to suppress output of the 'l2' layer when writing the
+    document you could do:
+
+        doc = dataclasses.replace(doc, layer_defs=[('l1', ['POS'])]
+        doc.tsv()
     """
     layer_defs: Sequence[Tuple[str, Sequence[str]]]
     sentences: Sequence[Sentence]
@@ -122,7 +130,7 @@ class Document:
     def empty(cls, layer_defs=None):
         if layer_defs is None:
             layer_defs = []
-        return Document(layer_defs, [], [], [])
+        return cls(layer_defs, [], [], [])
 
     @classmethod
     def from_token_lists(cls, token_lists: Sequence[Sequence[str]], layer_defs: Sequence = None) -> 'Document':
@@ -134,8 +142,8 @@ class Document:
     def token_sentence(self, token: Token) -> Sentence:
         return next(s for s in self.sentences if s.idx == token.sentence_idx)
 
-    def annotation_sentences(self, annotation: Annotation) -> Iterable[Sentence]:
-        return {self.token_sentence(t) for t in annotation.tokens}
+    def annotation_sentences(self, annotation: Annotation) -> List[Sentence]:
+        return sorted({self.token_sentence(t) for t in annotation.tokens}, key=lambda s: s.idx)
 
     def sentence_tokens(self, sentence: Sentence) -> List[Token]:
         return [t for t in self.tokens if t.sentence_idx == sentence.idx]
@@ -181,14 +189,13 @@ class Document:
 
 
 def token_sort(tokens: Iterable[Token]) -> List[Token]:
+    """
+    Sort tokens by their sentence_idx first, then by the index in their sentence.
+    """
     if not tokens:
         return []
     offset = max(t.idx for t in tokens) + 1
     return sorted(tokens, key=lambda t: (t.sentence_idx * offset) + t.idx)
-
-
-def _annotation_type(layer_name, field_name):
-    return '|'.join([layer_name, field_name])
 
 
 def fix_annotation_ids(annotations: Iterable[Annotation]) -> List[Annotation]:
@@ -230,6 +237,10 @@ def merge_into_annotations(annotations: Sequence[Annotation], annotation: Annota
         return [a if a != candidate else merged for a in annotations]
     else:
         return [*annotations, annotation]
+
+
+def _annotation_type(layer_name, field_name):
+    return '|'.join([layer_name, field_name])
 
 
 def _unescape(text: str) -> str:
@@ -340,32 +351,32 @@ def _tsv_read_lines(lines: List[str], overriding_layer_names: List[Tuple[str, Li
     return Document(layer_defs=layer_defs, sentences=sentences, tokens=tokens, annotations=annotations)
 
 
-def webanno_tsv_read_string(tsv: str, overriding_layer_names: List[Tuple[str, List[str]]] = None) -> Document:
+def webanno_tsv_read_string(tsv: str, overriding_layer_def: List[Tuple[str, List[str]]] = None) -> Document:
     """
     Read the string content of a tsv file and return a Document representation
 
     :param tsv: The tsv input to read.
-    :param overriding_layer_names: If this is given, use these names
-        instead of headers defined in the string to identify layers
-        and fields
+    :param overriding_layer_def: If this is given, use these names
+        instead of headers defined in the tsv string to name layers
+        and fields. See Document for an example of layer_defs.
     :return: A Document instance of string input
     """
-    return _tsv_read_lines(tsv.splitlines(), overriding_layer_names)
+    return _tsv_read_lines(tsv.splitlines(), overriding_layer_def)
 
 
-def webanno_tsv_read_file(path: str, overriding_layer_names: List[Tuple[str, List[str]]] = None) -> Document:
+def webanno_tsv_read_file(path: str, overriding_layer_defs: List[Tuple[str, List[str]]] = None) -> Document:
     """
     Read the tsv file at path and return a Document representation.
 
     :param path: Path to read.
-    :param overriding_layer_names: If this is given, use these names
-        instead of headers defined in the file to identify layers
-        and fields
+    :param overriding_layer_defs: If this is given, use these names
+        instead of headers defined in the file to name layers
+        and fields. See Document for an example of layer_defs.
     :return: A Document instance of the file at path.
     """
     with open(path, mode='r', encoding='utf-8') as f:
         lines = f.readlines()
-    doc = _tsv_read_lines(lines, overriding_layer_names)
+    doc = _tsv_read_lines(lines, overriding_layer_defs)
     return replace(doc, path=path)
 
 
@@ -430,6 +441,12 @@ def _write_line(doc: Document, token: Token) -> str:
 
 
 def webanno_tsv_write(doc: Document, linebreak='\n') -> str:
+    """
+    Return a tsv string that represents the given Document.
+    If there are repeated label_ids in the Docuemnt's Annotations, these
+    will be corrected. If there are Annotations that are missing a label_id,
+    it will be added.
+    """
     lines = []
     lines += HEADERS
     for name, fields in doc.layer_defs:
