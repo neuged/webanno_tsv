@@ -2,7 +2,7 @@ import os
 import unittest
 from dataclasses import replace
 
-from webanno_tsv import (
+from webanno_tsv.webanno_tsv import (
     webanno_tsv_read_file, webanno_tsv_read_string,
     Annotation, Document, Sentence, Token,
     NO_LABEL_ID
