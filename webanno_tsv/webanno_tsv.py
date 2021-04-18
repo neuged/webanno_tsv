@@ -13,7 +13,7 @@ FIELD_EMPTY_RE = re.compile('^[_*]')
 FIELD_WITH_ID_RE = re.compile(r'(.*)\[([0-9]*)]$')
 SUB_TOKEN_RE = re.compile(r'[0-9]+-[0-9]+\.[0-9]+')
 
-HEADERS = ['#FORMAT=WebAnno TSV 3.1']
+HEADERS = ['#FORMAT=WebAnno TSV 3.3']
 
 TOKEN_FIELDNAMES = ['sent_tok_idx', 'offsets', 'token']
 

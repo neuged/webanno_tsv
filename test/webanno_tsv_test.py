@@ -237,7 +237,7 @@ class WebannoTsvWriteTest(unittest.TestCase):
         result = doc.tsv()
 
         expected = [
-            '#FORMAT=WebAnno TSV 3.1',
+            '#FORMAT=WebAnno TSV 3.3',
             '#T_SP=l1|pos',
             '#T_SP=l2|lemma',
             '#T_SP=l3|entity_id|named_entity',
