@@ -1,7 +1,7 @@
 
 # webanno_tsv
 
-A Library to parse TSV files as produced by the [webanno Software](https://github.com/webanno/webanno) and as described [in their documentation](https://zoidberg.ukp.informatik.tu-darmstadt.de/jenkins/job/WebAnno%20%28GitHub%29%20%28master%29/de.tudarmstadt.ukp.clarin.webanno$webanno-webapp/doclinks/1/#sect_webannotsv).
+A python library to parse TSV files as produced by the [webanno Software](https://github.com/webanno/webanno) and as described [in their documentation](https://zoidberg.ukp.informatik.tu-darmstadt.de/jenkins/job/WebAnno%20%28GitHub%29%20%28master%29/de.tudarmstadt.ukp.clarin.webanno$webanno-webapp/doclinks/1/#sect_webannotsv).
 
 The following features are supported:
 
