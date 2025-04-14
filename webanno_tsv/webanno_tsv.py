@@ -364,7 +364,11 @@ def webanno_tsv_read_string(tsv: str, overriding_layer_def: List[Tuple[str, List
     return _tsv_read_lines(tsv.splitlines(), overriding_layer_def)
 
 
-def webanno_tsv_read_file(path: str, overriding_layer_defs: List[Tuple[str, List[str]]] = None) -> Document:
+def webanno_tsv_read_file(
+        path: str,
+        overriding_layer_defs: List[Tuple[str, List[str]]] = None,
+        encoding='utf-8'
+) -> Document:
     """
     Read the tsv file at path and return a Document representation.
 
@@ -372,9 +376,10 @@ def webanno_tsv_read_file(path: str, overriding_layer_defs: List[Tuple[str, List
     :param overriding_layer_defs: If this is given, use these names
         instead of headers defined in the file to name layers
         and fields. See Document for an example of layer_defs.
+    :param encoding: The encoding of the file (default: utf-8)
     :return: A Document instance of the file at path.
     """
-    with open(path, mode='r', encoding='utf-8') as f:
+    with open(path, mode='r', encoding=encoding) as f:
         lines = f.readlines()
     doc = _tsv_read_lines(lines, overriding_layer_defs)
     return replace(doc, path=path)
